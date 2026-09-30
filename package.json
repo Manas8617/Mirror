@@ -1,0 +1,12 @@
+{
+  "name": "mirror",
+  "version": "1.0.0",
+  "description": "MIRROR — Workflow Intelligence & Verification Engine",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start:backend": "node backend/src/server.js",
+    "start:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build"
+  }
+}
