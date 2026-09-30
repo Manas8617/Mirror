@@ -1,3 +1,4 @@
+```jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import PipelineStatus from './components/PipelineStatus';
@@ -5,6 +6,8 @@ import ObservationFeed from './components/ObservationFeed';
 import SemanticWorkflowCard from './components/SemanticWorkflowCard';
 import AuditPanel from './components/AuditPanel';
 import SyntheticWorkspaceView from './components/SyntheticWorkspaceView';
+
+const API_BASE_URL = 'https://mirror-backend-8koy.onrender.com';
 
 export default function App() {
   const [systemPhase, setSystemPhase] = useState('READY');
@@ -24,7 +27,7 @@ export default function App() {
   // Fetch full system state
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/status');
+      const res = await fetch(`${API_BASE_URL}/api/status`);
       if (res.ok) {
         const data = await res.json();
         setSystemPhase(data.systemPhase || 'READY');
@@ -45,7 +48,7 @@ export default function App() {
   useEffect(() => {
     fetchStatus();
 
-    const evtSource = new EventSource('/api/stream');
+    const evtSource = new EventSource(`${API_BASE_URL}/api/stream`);
 
     evtSource.addEventListener('INITIAL_STATE', (e) => {
       try {
@@ -85,16 +88,21 @@ export default function App() {
     evtSource.addEventListener('EXECUTION_PROGRESS', (e) => {
       try {
         const prog = JSON.parse(e.data);
+
         if (prog.type === 'STEP_START' || prog.type === 'STEP_COMPLETE') {
           setWorkflow((prev) => {
             if (!prev) return prev;
+
             const updatedSteps = [...prev.steps];
+
             if (updatedSteps[prog.stepIndex]) {
               updatedSteps[prog.stepIndex] = { ...prog.step };
             }
+
             return { ...prev, steps: updatedSteps };
           });
         }
+
         if (prog.type === 'EXECUTION_COMPLETE') {
           setIsExecuting(false);
           setSystemPhase('VERIFIED');
@@ -108,9 +116,19 @@ export default function App() {
     evtSource.addEventListener('STATE_CHANGE', (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.systemPhase) setSystemPhase(data.systemPhase);
-        if (data.workflow) setWorkflow(data.workflow);
-        if (data.approvalState) setApprovalState(data.approvalState);
+
+        if (data.systemPhase) {
+          setSystemPhase(data.systemPhase);
+        }
+
+        if (data.workflow) {
+          setWorkflow(data.workflow);
+        }
+
+        if (data.approvalState) {
+          setApprovalState(data.approvalState);
+        }
+
         fetchStatus();
       } catch (err) {
         console.error('SSE STATE_CHANGE error', err);
@@ -140,8 +158,16 @@ export default function App() {
       setErrorMessage(null);
       setIsObserving(true);
       setEvents([]);
-      const res = await fetch('/api/demo/start-observation', { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to start observation stream');
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/demo/start-observation`,
+        { method: 'POST' }
+      );
+
+      if (!res.ok) {
+        throw new Error('Failed to start observation stream');
+      }
+
       setSystemPhase('OBSERVING');
     } catch (err) {
       setErrorMessage(err.message);
@@ -152,9 +178,18 @@ export default function App() {
   const handleCreateAutomation = async () => {
     try {
       setErrorMessage(null);
-      const res = await fetch('/api/demo/create-automation', { method: 'POST' });
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/demo/create-automation`,
+        { method: 'POST' }
+      );
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to create automation');
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to create automation');
+      }
+
       setWorkflow(data.workflow);
       setSystemPhase('PROPOSED');
       fetchStatus();
@@ -167,9 +202,18 @@ export default function App() {
     try {
       setErrorMessage(null);
       setIsExecuting(true);
-      const res = await fetch('/api/demo/approve-and-run', { method: 'POST' });
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/demo/approve-and-run`,
+        { method: 'POST' }
+      );
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to authorize and run');
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to authorize and run');
+      }
+
       setSystemPhase('EXECUTING');
     } catch (err) {
       setErrorMessage(err.message);
@@ -182,8 +226,16 @@ export default function App() {
       setErrorMessage(null);
       setIsObserving(false);
       setIsExecuting(false);
-      const res = await fetch('/api/demo/reset', { method: 'POST' });
-      if (!res.ok) throw new Error('Reset failed');
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/demo/reset`,
+        { method: 'POST' }
+      );
+
+      if (!res.ok) {
+        throw new Error('Reset failed');
+      }
+
       await fetchStatus();
     } catch (err) {
       setErrorMessage(err.message);
@@ -192,6 +244,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0b0f19] text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-white">
+
       {/* Top Navigation */}
       <Header
         systemPhase={systemPhase}
@@ -203,10 +256,12 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+
         {/* Error notification banner if any */}
         {errorMessage && (
           <div className="p-3 bg-red-950/80 border border-red-800 text-red-200 text-xs rounded-xl flex items-center justify-between">
             <span>{errorMessage}</span>
+
             <button
               onClick={() => setErrorMessage(null)}
               className="text-red-400 hover:text-white font-bold ml-2"
@@ -219,9 +274,10 @@ export default function App() {
         {/* 5-Phase Pipeline Indicator */}
         <PipelineStatus systemPhase={systemPhase} />
 
-        {/* 2-Column Core: Left = Live Observation, Right = Discovered Semantic Workflow */}
+        {/* 2-Column Core */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: 5 Cols */}
+
+          {/* Left Column */}
           <div className="lg:col-span-5 h-full">
             <ObservationFeed
               events={events}
@@ -230,7 +286,7 @@ export default function App() {
             />
           </div>
 
-          {/* Right Column: 7 Cols */}
+          {/* Right Column */}
           <div className="lg:col-span-7 h-full">
             <SemanticWorkflowCard
               workflow={workflow}
@@ -263,3 +319,17 @@ export default function App() {
     </div>
   );
 }
+```
+
+### Now do exactly this
+
+1. Replace **all** of your current `App.jsx` with the code above.
+2. Click **Commit changes**.
+3. Wait for Render to redeploy `Mirror-frontend`.
+4. When it says **Live**, open the live site.
+5. Hard refresh with **Ctrl + Shift + R**.
+6. Click **Start Observing**.
+
+**Don't change anything else.**
+
+If you get an error after that, paste the error here.
