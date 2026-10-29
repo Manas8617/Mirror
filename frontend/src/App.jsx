@@ -11,10 +11,16 @@ const API_BASE_URL = 'https://mirror-backend-8koy.onrender.com';
 export default function App() {
   const [systemPhase, setSystemPhase] = useState('READY');
   const [workflow, setWorkflow] = useState(null);
+  const [events, setEvents] = useState([]);
   const [approvalState, setApprovalState] = useState(null);
+  const [syntheticData, setSyntheticData] = useState({
+    inbox: [],
+    processedFiles: [],
+    spreadsheetLedger: []
+  });
+  const [auditTrail, setAuditTrail] = useState([]);
   const [isObserving, setIsObserving] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
-  const [events, setEvents] = useState([]);
   const [errorMessage, setErrorMessage] = useState(null);
 
   // Fetch full system state
@@ -25,13 +31,19 @@ export default function App() {
         const data = await res.json();
         setSystemPhase(data.systemPhase || 'READY');
         setWorkflow(data.workflow || null);
+        setEvents(data.events || []);
         setApprovalState(data.approvalState || null);
+        setSyntheticData(data.syntheticData || { inbox: [], processedFiles: [], spreadsheetLedger: [] });
+        setAuditTrail(data.auditTrail || []);
+        setIsObserving(data.systemPhase === 'OBSERVING');
+        setIsExecuting(data.systemPhase === 'EXECUTING');
       }
     } catch (err) {
-      console.error('Failed to fetch status', err);
+      console.warn('API polling fallback notice:', err);
     }
   }, []);
 
+  // Initialize and connect SSE stream
   useEffect(() => {
     fetchStatus();
     const evtSource = new EventSource(`${API_BASE_URL}/api/stream`);
@@ -39,20 +51,35 @@ export default function App() {
     evtSource.addEventListener('INITIAL_STATE', (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.systemPhase) setSystemPhase(data.systemPhase);
-        if (data.workflow) setWorkflow(data.workflow);
-        if (data.approvalState) setApprovalState(data.approvalState);
+        setSystemPhase(data.systemPhase || 'READY');
+        setWorkflow(data.workflow || null);
+        setEvents(data.events || []);
+        setApprovalState(data.approvalState || null);
+        setSyntheticData(data.syntheticData || { inbox: [], processedFiles: [], spreadsheetLedger: [] });
+        setAuditTrail(data.auditTrail || []);
       } catch (err) {
-        console.error('SSE INITIAL_STATE error', err);
+        console.error('SSE INITIAL_STATE parse error', err);
       }
     });
 
-    evtSource.addEventListener('OBSERVATION_EVENT', (e) => {
+    evtSource.addEventListener('OBSERVED_EVENT', (e) => {
       try {
-        const eventData = JSON.parse(e.data);
-        setEvents((prev) => [...prev, eventData]);
+        const evt = JSON.parse(e.data);
+        setEvents((prev) => [...(prev || []), evt]);
       } catch (err) {
-        console.error('SSE OBSERVATION_EVENT error', err);
+        console.error('SSE OBSERVED_EVENT error', err);
+      }
+    });
+
+    evtSource.addEventListener('PATTERN_DETECTED', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setSystemPhase('PATTERN_DETECTED');
+        setWorkflow(data.workflow || null);
+        setIsObserving(false);
+        fetchStatus();
+      } catch (err) {
+        console.error('SSE PATTERN_DETECTED error', err);
       }
     });
 
@@ -61,7 +88,7 @@ export default function App() {
         const prog = JSON.parse(e.data);
         if (prog.type === 'STEP_START' || prog.type === 'STEP_COMPLETE') {
           setWorkflow((prev) => {
-            if (!prev) return prev;
+            if (!prev || !prev.steps) return prev;
             const updatedSteps = [...prev.steps];
             if (updatedSteps[prog.stepIndex]) {
               updatedSteps[prog.stepIndex] = { ...prog.step };
@@ -72,6 +99,7 @@ export default function App() {
         if (prog.type === 'EXECUTION_COMPLETE') {
           setIsExecuting(false);
           setSystemPhase('VERIFIED');
+          fetchStatus();
         }
       } catch (err) {
         console.error('SSE EXECUTION_PROGRESS error', err);
@@ -96,20 +124,32 @@ export default function App() {
       }
     });
 
+    evtSource.addEventListener('RESET_COMPLETE', () => {
+      fetchStatus();
+    });
+
+    evtSource.onerror = (err) => {
+      console.warn('SSE connection warning, using fallback sync', err);
+    };
+
+    // Polling safety interval
+    const interval = setInterval(fetchStatus, 2000);
+
     return () => {
       evtSource.close();
+      clearInterval(interval);
     };
   }, [fetchStatus]);
 
+  // Actions
   const handleStartObservation = async () => {
     try {
       setErrorMessage(null);
       setIsObserving(true);
       setEvents([]);
-      const res = await fetch(
-        `${API_BASE_URL}/api/demo/start-observation`,
-        { method: 'POST' }
-      );
+      const res = await fetch(`${API_BASE_URL}/api/demo/start-observation`, {
+        method: 'POST',
+      });
       if (!res.ok) {
         throw new Error('Failed to start observation stream');
       }
@@ -123,15 +163,14 @@ export default function App() {
   const handleCreateAutomation = async () => {
     try {
       setErrorMessage(null);
-      const res = await fetch(
-        `${API_BASE_URL}/api/demo/create-automation`,
-        { method: 'POST' }
-      );
+      const res = await fetch(`${API_BASE_URL}/api/demo/create-automation`, {
+        method: 'POST',
+      });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || 'Failed to create automation');
       }
-      setWorkflow(data.workflow);
+      setWorkflow(data.workflow || null);
       setSystemPhase('PROPOSED');
       fetchStatus();
     } catch (err) {
@@ -143,10 +182,9 @@ export default function App() {
     try {
       setErrorMessage(null);
       setIsExecuting(true);
-      const res = await fetch(
-        `${API_BASE_URL}/api/demo/approve-and-run`,
-        { method: 'POST' }
-      );
+      const res = await fetch(`${API_BASE_URL}/api/demo/approve-and-run`, {
+        method: 'POST',
+      });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || 'Failed to authorize and run');
@@ -163,10 +201,9 @@ export default function App() {
       setErrorMessage(null);
       setIsObserving(false);
       setIsExecuting(false);
-      const res = await fetch(
-        `${API_BASE_URL}/api/demo/reset`,
-        { method: 'POST' }
-      );
+      const res = await fetch(`${API_BASE_URL}/api/demo/reset`, {
+        method: 'POST',
+      });
       if (!res.ok) {
         throw new Error('Reset failed');
       }
@@ -181,7 +218,10 @@ export default function App() {
       {/* Top Navigation */}
       <Header
         systemPhase={systemPhase}
+        onStartObservation={handleStartObservation}
         onReset={handleReset}
+        isExecuting={isExecuting}
+        isObserving={isObserving}
       />
 
       {/* Main Container */}
@@ -207,7 +247,7 @@ export default function App() {
           {/* Left Column */}
           <div className="lg:col-span-5 h-full">
             <ObservationFeed
-              events={events}
+              events={events || []}
               isObserving={isObserving}
               onStartObservation={handleStartObservation}
             />
@@ -217,20 +257,32 @@ export default function App() {
           <div className="lg:col-span-7 h-full">
             <SemanticWorkflowCard
               workflow={workflow}
+              systemPhase={systemPhase}
               approvalState={approvalState}
-              isExecuting={isExecuting}
               onCreateAutomation={handleCreateAutomation}
               onApproveAndRun={handleApproveAndRun}
+              isExecuting={isExecuting}
             />
           </div>
         </div>
 
-        {/* Audit Panel & Workspace View */}
-        <div className="grid grid-cols-1 gap-6">
-          <AuditPanel workflow={workflow} />
-          <SyntheticWorkspaceView systemPhase={systemPhase} />
-        </div>
+        {/* Synthetic Workspace Proof Panel */}
+        <SyntheticWorkspaceView
+          syntheticData={syntheticData}
+          systemPhase={systemPhase}
+        />
+
+        {/* Activity & Audit Governance Panel */}
+        <AuditPanel
+          auditTrail={auditTrail || []}
+          approvalState={approvalState}
+        />
       </main>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-900 bg-slate-950/60 py-4 px-6 text-center text-xs text-slate-500">
+        MIRROR MVP — Workflow Intelligence & Verification Engine. Safe deterministic sandbox execution.
+      </footer>
     </div>
   );
 }
